@@ -7,8 +7,9 @@ $goalId = (int)($_GET['id'] ?? $_POST['goal_id'] ?? 0);
 $goal = getGoalById($userId, $goalId);
 
 if (!$goal) {
-    http_response_code(404);
-    exit('Sparziel nicht gefunden.');
+    setFlash('error', 'Sparziel nicht gefunden.');
+    header('Location: dashboard.php');
+    exit;
 }
 
 $initialAmount = getGoalInitialAmount($goalId);
