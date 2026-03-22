@@ -62,12 +62,6 @@ function getEffectiveMonthlySetting(int $userId, string $month): array {
     ];
 }
 
-function monthAlreadyCalculated(int $userId, string $month): bool {
-    $stmt = db()->prepare("SELECT COUNT(*) FROM monthly_runs WHERE user_id = ? AND booking_month = ?");
-    $stmt->execute([$userId, $month]);
-    return (int)$stmt->fetchColumn() > 0;
-}
-
 function getOpenGoals(int $userId, string $month): array {
     $stmt = db()->prepare("
         SELECT g.*,
@@ -408,25 +402,6 @@ function markOneTimeContributionProcessed(int $id): void {
     $stmt->execute([$id]);
 }
 
-function getPaymentHistory(int $userId, int $limit = 200): array {
-    $stmt = db()->prepare("
-        SELECT
-            ma.id,
-            ma.booking_month,
-            ma.source,
-            ma.amount,
-            ma.created_at,
-            g.name AS goal_name
-        FROM monthly_allocations ma
-        LEFT JOIN goals g ON g.id = ma.goal_id
-        WHERE ma.user_id = ?
-        ORDER BY ma.booking_month DESC, ma.created_at DESC, ma.id DESC
-        LIMIT " . (int)$limit
-    );
-    $stmt->execute([$userId]);
-    return $stmt->fetchAll();
-}
-
 function paymentSourceLabel(string $source): string {
     return match ($source) {
         'automatic' => 'Monatlich automatisch',
@@ -490,11 +465,11 @@ function allocateAmountToSingleGoal(int $userId, int $goalId, string $month, flo
 
     if ($rest > 0) {
         $openGoals = getOpenGoals($userId, $month);
-        $remainingGoals = array_values(array_filter($openGoals, fn($g) => (int)$g['id'] !== $goalId));
+        $hasOtherOpenGoals = count(array_filter($openGoals, fn($g) => (int)$g['id'] !== $goalId)) > 0;
 
-        if ($remainingGoals) {
-            $dummyAbsolute = 0;
-            redistributeWithOverflow($userId, $month, $rest, $dummyAbsolute, 'credit_reallocation');
+        if ($hasOtherOpenGoals) {
+            // Use 100% relative distribution (0% absolute) for overflow reallocation
+            redistributeWithOverflow($userId, $month, $rest, 0, 'credit_reallocation');
         } else {
             addWalletCredit($userId, $rest);
         }
@@ -514,9 +489,11 @@ function getGroupedPaymentHistory(int $userId, int $limit = 500): array {
         LEFT JOIN goals g ON g.id = ma.goal_id
         WHERE ma.user_id = ?
         ORDER BY ma.created_at DESC, ma.id DESC
-        LIMIT " . (int)$limit
-    );
-    $stmt->execute([$userId]);
+        LIMIT ?
+    ");
+    $stmt->bindValue(1, $userId, PDO::PARAM_INT);
+    $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+    $stmt->execute();
     $rows = $stmt->fetchAll();
 
     $grouped = [];
